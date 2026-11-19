@@ -27,7 +27,7 @@ const CONFIG = {
   sitePath: '/sites/StockTakes',              // the stock takes site address after the host
   officeContact: 'Abbi/Amber'                 // shown to vets, e.g. 'Sarah in the office'
 };
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
 </script>
 <style>
 :root{
@@ -289,7 +289,7 @@ async function g(path, opt){
 
 /* ---------- SharePoint ---------- */
 let DRIVE = null;
-const LOOK = {site:'', library:'', folders:[], files:0};
+const LOOK = {site:'', library:'', folders:[], files:0, seen:[], errors:[]};
 async function drive(){
   if (DRIVE) return DRIVE;
   const site = await (await g(`/sites/${CONFIG.siteHost}:${CONFIG.sitePath}?$select=id,displayName,webUrl`)).json();
@@ -298,23 +298,38 @@ async function drive(){
   DRIVE = d.id;
   return DRIVE;
 }
+async function listChildren(D, id){
+  const base = `/drives/${D}/${id === 'root' ? 'root' : 'items/' + id}/children?$top=200`;
+  for (let attempt = 0; attempt < 3; attempt++){
+    try { return (await (await g(base)).json()).value || []; }
+    catch (e){
+      if (e && (e.status === 429 || e.status === 503) && attempt < 2){ await sleep(1500 * (attempt + 1)); continue; }
+      throw e;
+    }
+  }
+  return [];
+}
 async function listCounts(){
   const D = await drive();
-  const files = []; LOOK.folders = [];
+  const files = []; LOOK.folders = []; LOOK.seen = []; LOOK.errors = [];
   let level = [{id:'root', path:''}];
   for (let depth = 0; depth < 4 && level.length; depth++){
     const next = [];
-    const res = await Promise.all(level.slice(0, 60).map(f =>
-      g(`/drives/${D}/${f.id === 'root' ? 'root' : 'items/' + f.id}/children?$top=200&$select=id,name,folder,file,lastModifiedDateTime`)
-        .then(r => r.json()).catch(() => ({value:[]}))));
-    res.forEach((r, k) => {
-      const parent = level[k];
-      for (const x of (r.value || [])){
-        const path = parent.path ? parent.path + ' › ' + x.name : x.name;
-        if (x.folder){ next.push({id:x.id, path}); LOOK.folders.push(path); }
-        else if (x.file && /\.xlsx$/i.test(x.name) && !/^~\$/.test(x.name)) files.push(Object.assign({folder:parent.path}, x));
+    const batch = level.slice(0, 60);
+    for (let k = 0; k < batch.length; k += 4){
+      const chunk = batch.slice(k, k + 4);
+      const res = await Promise.all(chunk.map(f => listChildren(D, f.id).then(v => ({f, v})).catch(e => { LOOK.errors.push(`${f.path || 'top level'} (${e && e.status ? 'error ' + e.status : 'no signal'})`); return {f, v:[]}; })));
+      for (const {f, v} of res){
+        for (const x of v){
+          const path = f.path ? f.path + ' › ' + x.name : x.name;
+          if (x.folder){ next.push({id:x.id, path}); LOOK.folders.push(path); }
+          else {
+            LOOK.seen.push(path);
+            if (/\.xlsx$/i.test(x.name) && !/^~\$/.test(x.name)) files.push(Object.assign({folder:f.path}, x));
+          }
+        }
       }
-    });
+    }
     level = next;
   }
   LOOK.files = files.length;
@@ -327,7 +342,9 @@ function lookingIn(){
     h('div', null, h('b', {text:'Signed in as: '}), who),
     h('div', null, h('b', {text:'Looking in: '}), `${LOOK.site} › ${LOOK.library}`),
     h('div', null, h('b', {text:'Folders this account can see: '}), LOOK.folders.length ? LOOK.folders.slice(0, 20).join(', ') + (LOOK.folders.length > 20 ? '…' : '') : 'none'),
-    h('div', null, h('b', {text:'Excel files found: '}), String(LOOK.files)));
+    h('div', null, h('b', {text:'Excel files found: '}), String(LOOK.files)),
+    h('div', null, h('b', {text:'All files seen: '}), LOOK.seen.length ? LOOK.seen.slice(0, 30).join(', ') : 'none'),
+    LOOK.errors.length ? h('div', null, h('b', {text:'Couldn’t read: '}), LOOK.errors.join(', ')) : null);
 }
 async function download(itemId){
   const D = await drive();
