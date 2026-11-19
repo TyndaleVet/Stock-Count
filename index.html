@@ -27,7 +27,7 @@ const CONFIG = {
   sitePath: '/sites/StockTakes',              // the stock takes site address after the host
   officeContact: 'Abbi/Amber'                 // shown to vets, e.g. 'Sarah in the office'
 };
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 </script>
 <style>
 :root{
@@ -124,6 +124,22 @@ dialog h3{margin:0 0 8px; font-size:20px}
 .hero .mark{width:84px; height:84px; border-radius:22px; margin:0 auto 18px; display:block}
 .hero .logo{width:min(320px, 85%); height:auto; margin:0 auto 26px; display:block}
 .ver{text-align:center; font-size:12px; color:var(--muted); margin-top:30px}
+.figs{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; margin:12px 0}
+.fig{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px 14px}
+.fig .v{font-size:28px; font-weight:700; line-height:1.1; font-variant-numeric:tabular-nums}
+.fig .k{font-size:14px; color:var(--muted); margin-top:2px}
+.fig .cmp{font-size:13px; font-weight:700; margin-top:6px}
+.cmp.good{color:var(--field)} .cmp.bad{color:var(--danger)} .cmp.same{color:var(--muted)}
+.fig.loss .v{color:var(--danger)}
+.flag{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:8px 0}
+.flag b{display:block; font-size:17px}
+.flag ul{margin:6px 0 0; padding-left:20px; font-size:15px}
+.flag .why{font-size:14px; color:var(--muted); margin-top:4px}
+.hist{display:grid; gap:8px}
+.hist .card{cursor:default; display:block}
+.hist .mini{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:4px 12px; margin-top:8px; font-size:15px}
+.hist .mini b{font-variant-numeric:tabular-nums}
+.hist .team{background:transparent; border-style:dashed}
 </style>
 </head>
 <body>
@@ -221,7 +237,8 @@ function readBook(wb){
   const ds = wb.getWorksheet('_data'), is = wb.getWorksheet('_items'), cs = wb.getWorksheet('Count'), xs = wb.getWorksheet('Add missing');
   if (!ds || cellVal(ds.getCell('A1')) !== 'stockcount-v1' || !is || !cs) throw new Error('notours');
   const meta = {id:String(cellVal(ds.getCell('A2')) || ''), vet:String(cellVal(ds.getCell('A3')) || ''), car:String(cellVal(ds.getCell('A4')) || ''),
-    status:String(cellVal(ds.getCell('A5')) || 'open'), sentAt:cellVal(ds.getCell('A6')), sentBy:cellVal(ds.getCell('A7'))};
+    status:String(cellVal(ds.getCell('A5')) || 'open'), sentAt:cellVal(ds.getCell('A6')), sentBy:cellVal(ds.getCell('A7')), team:null};
+  try { const tj = cellVal(ds.getCell('A8')); if (tj) meta.team = JSON.parse(String(tj)); } catch {}
   const items = [];
   is.eachRow((row, n) => {
     if (n === 1) return;
@@ -229,6 +246,7 @@ function readBook(wb){
     const r = +v(2); if (!r) return;
     const t = cellVal(cs.getCell(r, 5));
     items.push({ref:+v(1), row:r, n:String(v(3) ?? ''), b:String(v(4) ?? ''), d:dateStr(v(5)), e:num(v(6)) ?? 0, u:String(v(7) ?? ''), wq:num(v(10)),
+      c:String(v(8) ?? ''), p:num(v(11)),
       q:num(cellVal(cs.getCell(r, 3))), t: t == null ? '' : String(t)});
   });
   const extras = [];
@@ -255,6 +273,107 @@ function writeBook(wb, M){
   ds.getCell('A5').value = M.meta.status || 'open';
   ds.getCell('A6').value = M.meta.sentAt || null;
   ds.getCell('A7').value = M.meta.sentBy || null;
+}
+
+/* ---------- results ---------- */
+const gbp = v => v == null || isNaN(v) ? '–' : (v < 0 ? '−' : '') + '£' + Math.abs(v).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
+const pct = v => v == null || isNaN(v) ? '–' : (Math.round(v * 1000) / 10) + '%';
+function analyseCount(M){
+  const items = M.items.map(it => Object.assign({}, it, {qq: it.q == null ? it.e : it.q}));
+  const extras = M.extras.map(x => {
+    const m = M.items.find(i => i.n.toLowerCase() === x.n.toLowerCase());
+    return {n: m ? m.n : x.n, c: m ? m.c : '', p: m ? m.p : null, u: m ? m.u : '', b:x.b, d:x.d, e:0, qq:x.q, x:true};
+  });
+  const R = {lines:items.length, ok:0, vetitV:0, priced:true, missingV:0, missing:[], batch:[], notTrans:[], negLines:0, expiredV:0, expired:[]};
+  for (const it of items){
+    if (round(it.qq) === round(it.e)) R.ok++;
+    if (it.p != null) R.vetitV += it.e * it.p; else R.priced = false;
+    const x = expiryOf(it.d);
+    if (x && x.gone && it.qq > 0){ R.expired.push({n:it.n, b:it.b, d:it.d, q:it.qq, u:it.u}); if (it.p != null) R.expiredV += it.qq * it.p; }
+  }
+  const groups = new Map();
+  for (const it of items.concat(extras)){ const k = (it.c || it.n).trim().toLowerCase(); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
+  for (const its of groups.values()){
+    let short = 0, over = 0;
+    const dif = its.map(it => round(it.qq - it.e));
+    dif.forEach(v => { if (v < 0) short += -v; else if (v > 0) over += v; });
+    const swap = round(Math.min(short, over));
+    const base = its.find(i => !i.x) || its[0];
+    its.forEach((it, j) => {
+      const v = dif[j];
+      if (!it.x && it.e < 0) R.negLines++;
+      if (v < 0 && over === 0) R.missing.push({n:it.n, b:it.b, q:-v, u:it.u});
+      if (v > 0 && short === 0) R.notTrans.push({n:it.n, b:it.b, q:v, u:it.u, neg: !it.x && it.e < 0});
+    });
+    if (swap > 0) R.batch.push({n:base.n, q:swap, u:base.u});
+    if (base.p != null) R.missingV += (short - swap) * base.p;
+  }
+  R.accuracy = R.lines ? R.ok / R.lines : null;
+  R.missingPct = R.vetitV > 0 ? R.missingV / R.vetitV : null;
+  if (!R.priced){ R.missingV = null; R.missingPct = null; R.expiredV = null; }
+  return R;
+}
+function cmp(mine, team, lowerBetter, f){
+  if (team == null || mine == null) return null;
+  if (Math.abs(mine - team) < 1e-9) return h('div', {class:'cmp same', text:'Same as team average'});
+  const better = lowerBetter ? mine < team : mine > team;
+  return h('div', {class:'cmp ' + (better ? 'good' : 'bad'), text:`Team average ${f(team)}`});
+}
+const one = v => String(Math.round(v * 10) / 10);
+const qtyTxt = x => `${fmt(x.q)}${unitOf(x) ? ' ' + unitOf(x) : ''}`;
+function resultsBlock(M){
+  const R = analyseCount(M);
+  const T = M.meta.team && M.meta.team.avg && M.meta.team.n ? M.meta.team.avg : null;
+  const wrap = h('div');
+  wrap.append(h('div', {class:'figs'},
+    h('div', {class:'fig'}, h('div', {class:'v', text:pct(R.accuracy)}), h('div', {class:'k', text:`Lines correct (${R.ok} of ${R.lines})`}), cmp(R.accuracy, T && T.accuracy, false, pct)),
+    h('div', {class:'fig' + (R.missingV > 0 ? ' loss' : '')}, h('div', {class:'v', text:gbp(R.missingV)}), h('div', {class:'k', text:'Missing: likely not charged'}), cmp(R.missingPct, T && T.missingPct, true, v => pct(v) + ' of stock')),
+    h('div', {class:'fig'}, h('div', {class:'v', text:String(R.batch.length)}), h('div', {class:'k', text:'Products with wrong batch'}), cmp(R.batch.length, T && T.batchProducts, true, one)),
+    h('div', {class:'fig'}, h('div', {class:'v', text:String(R.notTrans.length)}), h('div', {class:'k', text:'Lines not transferred in'}), cmp(R.notTrans.length, T && T.notTransLines, true, one))));
+  const list = arr => h('ul', null, arr.slice(0, 12).map(x => h('li', {text:`${x.n}${x.b ? ', batch ' + x.b : ''}: ${qtyTxt(x)}`})), arr.length > 12 ? h('li', {text:`and ${arr.length - 12} more`}) : null);
+  if (R.missing.length) wrap.append(h('div', {class:'flag'}, h('b', {text:`Missing${R.missingV != null ? ': ' + gbp(R.missingV) : ''}`}),
+    h('div', {class:'why', text:'VetIT expected these in the car and they weren’t there. Usually something used on farm but not charged.'}), list(R.missing)));
+  if (R.batch.length) wrap.append(h('div', {class:'flag'}, h('b', {text:'Wrong batch recorded'}),
+    h('div', {class:'why', text:'The total was right but the batches were swapped, so the wrong batch was picked when billing.'}), list(R.batch)));
+  if (R.notTrans.length) wrap.append(h('div', {class:'flag'}, h('b', {text:'Not transferred in'}),
+    h('div', {class:'why', text:'More in the car than VetIT knew about, or stock used before it was transferred. Ask the office to book stock as a transfer before you use it.'}), list(R.notTrans)));
+  if (R.expired.length) wrap.append(h('div', {class:'flag'}, h('b', {text:`Expired stock in the car${R.expiredV ? ': ' + gbp(R.expiredV) : ''}`}),
+    h('div', {class:'why', text:'Bring these back to the office.'}), list(R.expired)));
+  if (!R.missing.length && !R.batch.length && !R.notTrans.length) wrap.append(h('div', {class:'flag'}, h('b', {text:'No missing stock, wrong batches or untransferred stock. Well done.'})));
+  if (T) wrap.append(h('p', {class:'small muted', text:`Team averages are from ${T && M.meta.team.n} vets’ latest counts. Nobody else’s individual figures are shown.`}));
+  if (!R.priced) wrap.append(h('p', {class:'small muted', text:'£ figures aren’t available for this count.'}));
+  return wrap;
+}
+async function screenResults(){
+  setScreen(h('p', {class:'muted', text:'Loading your results…'}));
+  let files;
+  try { files = await listCounts(); } catch (e){ return screenError(e); }
+  const done = [];
+  for (const f of files.slice(0, 30)){
+    let M = S.cache.get(f.id + f.lastModifiedDateTime);
+    if (!M){ try { const {buf} = await download(f.id); const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf); M = readBook(wb); S.cache.set(f.id + f.lastModifiedDateTime, M); } catch { continue; } }
+    if (M.meta.status === 'submitted') done.push(M);
+  }
+  done.sort((a, b) => String(b.meta.sentAt).localeCompare(String(a.meta.sentAt)));
+  const back = h('button', {class:'back', type:'button', text:'‹ Your counts', onclick:screenHome});
+  if (!done.length){ setScreen(back, h('h1', {text:'Your results'}), h('div', {class:'empty', text:'Your results appear here after you’ve sent a count to the office.'})); return; }
+  const latest = done[0];
+  const T = latest.meta.team && latest.meta.team.n ? latest.meta.team.avg : null;
+  const hist = h('div', {class:'hist'});
+  if (T) hist.append(h('div', {class:'card team'}, h('span', {class:'t', text:'Team average'}),
+    h('div', {class:'mini'}, h('span', null, 'Correct ', h('b', {text:pct(T.accuracy)})), h('span', null, 'Missing ', h('b', {text:gbp(T.missingV)})),
+      h('span', null, 'Wrong batch ', h('b', {text:one(T.batchProducts)})), h('span', null, 'Not transferred ', h('b', {text:one(T.notTransLines)})))));
+  for (const M of done){
+    const R = analyseCount(M);
+    const when = M.meta.sentAt ? new Date(M.meta.sentAt).toLocaleDateString('en-GB', {day:'numeric', month:'short', year:'numeric'}) : '';
+    hist.append(h('div', {class:'card'}, h('span', {class:'t', text:when}), h('div', {class:'s', text:M.meta.car}),
+      h('div', {class:'mini'}, h('span', null, 'Correct ', h('b', {text:pct(R.accuracy)})), h('span', null, 'Missing ', h('b', {text:gbp(R.missingV)})),
+        h('span', null, 'Wrong batch ', h('b', {text:String(R.batch.length)})), h('span', null, 'Not transferred ', h('b', {text:String(R.notTrans.length)})),
+        h('span', null, 'Expired ', h('b', {text:gbp(R.expiredV)})))));
+  }
+  const when = latest.meta.sentAt ? new Date(latest.meta.sentAt).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : '';
+  setScreen(back, h('h1', {text:'Your results'}), h('h2', {text:`Latest count: ${latest.meta.car}, ${when}`}), resultsBlock(latest),
+    h('h2', {text:'Every count'}), hist);
 }
 
 /* ---------- sign in ---------- */
@@ -361,7 +480,7 @@ async function upload(itemId, buf, eTag){
 }
 
 /* ---------- state ---------- */
-const S = { files:null, loadErr:'', open:null };
+const S = { files:null, loadErr:'', open:null, cache:new Map() };
 // open = {itemId, name, eTag, wb, M, dirty, saving, status, timer, filter, q}
 const draftKey = id => 'sc:draft:' + id;
 function saveDraft(o){ try { localStorage.setItem(draftKey(o.itemId), JSON.stringify({id:o.M.meta.id, items:o.M.items.map(i => [i.ref, i.q, i.t]), extras:o.M.extras, status:o.M.meta.status, sentAt:o.M.meta.sentAt, sentBy:o.M.meta.sentBy})); } catch {} }
@@ -401,7 +520,8 @@ async function screenHome(){
     return;
   }
   const list = h('ul', {class:'list'});
-  setScreen(head, h('p', {class:'muted', text:'Tap a count to open it.'}), list,
+  const resBtn = h('button', {class:'btn quiet wide', type:'button', text:'Your results', hidden:true, style:'margin-bottom:14px', onclick:screenResults});
+  setScreen(head, resBtn, h('p', {class:'muted', text:'Tap a count to open it.'}), list,
     h('div', {style:'margin-top:14px'}, h('button', {class:'btn quiet', type:'button', text:'Refresh', onclick:screenHome})), h('p', {class:'ver', text:'Version ' + APP_VERSION}));
   for (const f of files.slice(0, 12)){
     const label = f.name.replace(/\.xlsx$/i, '').replace(/[-_]+/g, ' ');
@@ -412,6 +532,8 @@ async function screenHome(){
     download(f.id).then(async ({buf}) => {
       const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
       const M = readBook(wb);
+      S.cache.set(f.id + f.lastModifiedDateTime, M);
+      if (M.meta.status === 'submitted') resBtn.hidden = false;
       title.textContent = M.meta.car || label;
       const checked = M.items.filter(i => i.q != null).length;
       if (M.meta.status === 'submitted'){ go.textContent = 'View'; sub.replaceChildren(h('span', {class:'sent', text:'Sent to the office'}), ` ${M.meta.sentAt ? new Date(M.meta.sentAt).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : ''}`); }
@@ -515,6 +637,9 @@ function renderCount(){
     editable
       ? h('p', {class:'muted', text:'Make sure your billing is up to date first. Tap Matches if the car agrees with VetIT, or type what you actually have. Anything left can be sent as matching.'})
       : h('p', {class:'note', text:`Sent to the office${M.meta.sentAt ? ' on ' + new Date(M.meta.sentAt).toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}. Ask ${CONFIG.officeContact} if something needs changing.`}),
+    editable ? null : h('h2', {text:'Your results for this count'}),
+    editable ? null : resultsBlock(M),
+    editable ? null : h('h2', {text:'Your count'}),
     prog, h('div', {class:'tools'}, search, seg), list
   ];
   if (editable){
@@ -658,7 +783,7 @@ async function sendCount(){
   if (o.dirty){
     await ask('Saved on this phone', 'Your count is marked as sent, but it hasn’t reached the office yet. Keep the app open when you have signal and it will finish sending.', 'OK', null);
   } else {
-    await ask('Sent', `Thanks. Let ${CONFIG.officeContact} know on Teams that your stock take is done, and wait for them to confirm VetIT is updated before billing from the car.`, 'OK', null);
+    await ask('Sent', `Thanks. Let ${CONFIG.officeContact} know on Teams that your stock take is done, and wait for them to confirm VetIT is updated before billing from the car. Your results are shown at the top of this count.`, 'OK', null);
   }
   renderCount();
 }
