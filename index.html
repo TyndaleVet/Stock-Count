@@ -21,13 +21,13 @@
    this file needs changing to get started.
    ====================================================================== */
 const CONFIG = {
-  tenantId: '5e432375-73fd-4654-bca3-6614c1442769',
-  clientId: '4b7c3587-e524-459d-be07-dee44c298463',
-  siteHost: 'tyndalevetscouk.sharepoint.com',   // e.g. contosovets.sharepoint.com
+  tenantId: 'PASTE-DIRECTORY-TENANT-ID-HERE',
+  clientId: 'PASTE-APPLICATION-CLIENT-ID-HERE',
+  siteHost: 'yourpractice.sharepoint.com',   // e.g. contosovets.sharepoint.com
   sitePath: '/sites/StockTakes',              // the stock takes site address after the host
-  officeContact: 'the office'                 // shown to vets, e.g. 'Abbi/Amber'
+  officeContact: 'the office'                 // shown to vets, e.g. 'Sarah in the office'
 };
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 </script>
 <style>
 :root{
@@ -289,26 +289,45 @@ async function g(path, opt){
 
 /* ---------- SharePoint ---------- */
 let DRIVE = null;
+const LOOK = {site:'', library:'', folders:[], files:0};
 async function drive(){
   if (DRIVE) return DRIVE;
-  const cached = localStorage.getItem('sc:drive:' + CONFIG.siteHost + CONFIG.sitePath);
-  if (cached){ DRIVE = cached; return DRIVE; }
-  const site = await (await g(`/sites/${CONFIG.siteHost}:${CONFIG.sitePath}?$select=id`)).json();
-  const d = await (await g(`/sites/${site.id}/drive?$select=id`)).json();
-  DRIVE = d.id; localStorage.setItem('sc:drive:' + CONFIG.siteHost + CONFIG.sitePath, DRIVE);
+  const site = await (await g(`/sites/${CONFIG.siteHost}:${CONFIG.sitePath}?$select=id,displayName,webUrl`)).json();
+  const d = await (await g(`/sites/${site.id}/drive?$select=id,name`)).json();
+  LOOK.site = site.displayName || CONFIG.sitePath; LOOK.library = d.name || 'Documents';
+  DRIVE = d.id;
   return DRIVE;
 }
 async function listCounts(){
   const D = await drive();
-  const root = await (await g(`/drives/${D}/root/children?$top=200&$select=id,name,folder,file,lastModifiedDateTime`)).json();
-  const files = [];
-  const take = (arr, folder) => arr.filter(x => x.file && /\.xlsx$/i.test(x.name)).forEach(x => files.push(Object.assign({folder}, x)));
-  take(root.value, '');
-  const folders = root.value.filter(x => x.folder);
-  const kids = await Promise.all(folders.map(f => g(`/drives/${D}/items/${f.id}/children?$top=200&$select=id,name,file,lastModifiedDateTime`).then(r => r.json()).catch(() => ({value:[]}))));
-  kids.forEach((k, i) => take(k.value, folders[i].name));
+  const files = []; LOOK.folders = [];
+  let level = [{id:'root', path:''}];
+  for (let depth = 0; depth < 4 && level.length; depth++){
+    const next = [];
+    const res = await Promise.all(level.slice(0, 60).map(f =>
+      g(`/drives/${D}/${f.id === 'root' ? 'root' : 'items/' + f.id}/children?$top=200&$select=id,name,folder,file,lastModifiedDateTime`)
+        .then(r => r.json()).catch(() => ({value:[]}))));
+    res.forEach((r, k) => {
+      const parent = level[k];
+      for (const x of (r.value || [])){
+        const path = parent.path ? parent.path + ' › ' + x.name : x.name;
+        if (x.folder){ next.push({id:x.id, path}); LOOK.folders.push(path); }
+        else if (x.file && /\.xlsx$/i.test(x.name) && !/^~\$/.test(x.name)) files.push(Object.assign({folder:parent.path}, x));
+      }
+    });
+    level = next;
+  }
+  LOOK.files = files.length;
   files.sort((a, b) => String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)));
   return files;
+}
+function lookingIn(){
+  const who = account ? (account.username || account.name) : '';
+  return h('div', {class:'note small'},
+    h('div', null, h('b', {text:'Signed in as: '}), who),
+    h('div', null, h('b', {text:'Looking in: '}), `${LOOK.site} › ${LOOK.library}`),
+    h('div', null, h('b', {text:'Folders this account can see: '}), LOOK.folders.length ? LOOK.folders.slice(0, 20).join(', ') + (LOOK.folders.length > 20 ? '…' : '') : 'none'),
+    h('div', null, h('b', {text:'Excel files found: '}), String(LOOK.files)));
 }
 async function download(itemId){
   const D = await drive();
@@ -358,7 +377,9 @@ async function screenHome(){
   const head = [h('h1', {text: firstName() ? `Hi ${firstName()}` : 'Your stock counts'})];
   if (!files.length){
     setScreen(head, h('div', {class:'empty', text:`No stock count waiting for you. ${CONFIG.officeContact.charAt(0).toUpperCase() + CONFIG.officeContact.slice(1)} will add one when it’s time.`}),
-      h('div', {style:'margin-top:14px'}, h('button', {class:'btn quiet', type:'button', text:'Check again', onclick:screenHome})), h('p', {class:'ver', text:'Version ' + APP_VERSION}));
+      h('div', {style:'margin-top:14px'}, h('button', {class:'btn quiet', type:'button', text:'Check again', onclick:screenHome})),
+      h('details', {style:'margin-top:18px'}, h('summary', {class:'small muted', text:'What the app can see'}), lookingIn()),
+      h('p', {class:'ver', text:'Version ' + APP_VERSION}));
     return;
   }
   const list = h('ul', {class:'list'});
