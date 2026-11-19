@@ -1,0 +1,639 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stock count">
+<meta name="theme-color" content="#2C5A43">
+<title>Stock count</title>
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.28.1/lib/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script>
+/* ======================================================================
+   SETTINGS: fill these in once (see the setup guide). Nothing else in
+   this file needs changing to get started.
+   ====================================================================== */
+const CONFIG = {
+  tenantId: '5e432375-73fd-4654-bca3-6614c1442769',
+  clientId: '4b7c3587-e524-459d-be07-dee44c298463',
+  siteHost: 'tyndalevetscouk.sharepoint.com',   // e.g. contosovets.sharepoint.com
+  sitePath: '/sites/StockTakes',              // the stock takes site address after the host
+  officeContact: 'the office'                 // shown to vets, e.g. 'Abbi/Amber'
+};
+const APP_VERSION = '1.0';
+</script>
+<style>
+:root{
+  --ground:#EBF0EA; --surface:#FFFFFF; --ink:#18241D; --muted:#56665D; --line:#CDD7CE;
+  --field:#2C5A43; --field-ink:#FFFFFF; --straw:#9A6400; --straw-edge:#D9A21E; --straw-soft:#FBEFC9;
+  --danger:#A33A2B; --focus:#1E6FD9; color-scheme:light;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --ground:#101613; --surface:#18201C; --ink:#E3EAE5; --muted:#9BAAA1; --line:#2A3730;
+    --field:#86C29F; --field-ink:#0C1810; --straw:#F2C35A; --straw-soft:#372B10; --danger:#EE8A78; --focus:#7DB3FF; color-scheme:dark; }
+}
+*,*::before,*::after{box-sizing:inherit}
+html{height:100%}
+body{margin:0; min-height:100%; background:var(--ground); color:var(--ink); font-family:"Atkinson Hyperlegible","Segoe UI",system-ui,-apple-system,Roboto,sans-serif; font-size:17px; line-height:1.45; -webkit-text-size-adjust:100%}
+body::before{content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:10; background:#2C5A43}
+button,input{font:inherit; color:inherit}
+:focus-visible{outline:3px solid var(--focus); outline-offset:2px}
+.bar{position:sticky; top:env(safe-area-inset-top,0px); z-index:5; background:#2C5A43; color:#fff; display:flex; align-items:center; gap:10px; padding:12px 16px}
+.bar b{font-size:18px}
+.bar .who{margin-left:auto; font-size:14px; opacity:.9; background:none; border:0; color:#fff; cursor:pointer; padding:6px 0}
+main{max-width:720px; margin:0 auto; padding:18px 14px 30px}
+h1{font-size:26px; line-height:1.15; margin:4px 0 8px}
+h2{font-size:18px; margin:24px 0 10px}
+p{margin:0 0 12px}
+.muted{color:var(--muted)} .small{font-size:14px}
+.btn{display:inline-flex; align-items:center; justify-content:center; min-height:50px; padding:10px 20px; border-radius:12px; border:2px solid var(--field); background:var(--field); color:var(--field-ink); font-weight:700; cursor:pointer; text-decoration:none}
+.btn.quiet{background:transparent; color:var(--field)}
+.btn[disabled]{opacity:.45}
+.btn.wide{width:100%}
+.note{background:var(--surface); border-left:4px solid var(--field); padding:12px 14px; border-radius:0 10px 10px 0; margin:12px 0}
+.note.warn{border-left-color:var(--straw-edge)}
+.note.bad{border-left-color:var(--danger)}
+.back{background:none; border:0; color:var(--field); font-weight:700; padding:6px 0; cursor:pointer; font-size:15px}
+.list{list-style:none; margin:0; padding:0; display:grid; gap:8px}
+.card{display:grid; grid-template-columns:1fr auto; gap:2px 12px; align-items:center; width:100%; text-align:left; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px 16px; cursor:pointer}
+.card .t{font-weight:700; font-size:19px}
+.card .s{grid-column:1; color:var(--muted); font-size:14px}
+.card .go{grid-row:1 / span 2; grid-column:2; font-weight:700; color:var(--field)}
+.card .sent{color:var(--field); font-weight:700}
+.progress .track{height:10px; background:var(--line); border-radius:6px; overflow:hidden}
+.progress .fill{height:100%; background:var(--field); width:0; transition:width .25s}
+.progress .lbl{display:flex; justify-content:space-between; font-size:15px; margin-top:6px}
+.progress .chg{color:var(--straw); font-weight:700}
+.tools{display:flex; flex-wrap:wrap; gap:8px; margin:14px 0}
+input.t{width:100%; min-height:48px; padding:10px 12px; border-radius:10px; border:2px solid var(--line); background:var(--surface)}
+.tools input.t{flex:1 1 200px; width:auto}
+.seg{display:flex; border:2px solid var(--field); border-radius:10px; overflow:hidden}
+.seg button{border:0; background:transparent; color:var(--field); font-weight:700; padding:0 12px; min-height:44px; cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--field); color:var(--field-ink)}
+.rows{list-style:none; margin:0; padding:0; display:grid; gap:6px}
+.row{background:var(--surface); border:1px solid var(--line); border-left:6px solid var(--line); border-radius:10px; padding:12px; display:grid; gap:8px}
+.row[data-state="ok"]{border-left-color:var(--field)}
+.row[data-state="diff"]{border-left-color:var(--straw-edge)}
+.row .name{font-weight:700; font-size:18px; line-height:1.25}
+.row .lot{display:flex; flex-wrap:wrap; gap:2px 14px; font-size:16px}
+.row .lot b{font-weight:700}
+.row .lbl{color:var(--muted)}
+.row .meta{color:var(--muted); font-size:15px; display:flex; flex-wrap:wrap; gap:4px 12px}
+.row .meta strong{color:var(--ink); font-size:17px}
+.row .badge{font-weight:700; color:var(--straw)}
+.row[data-exp]{color:#fff; border-color:transparent}
+.row[data-exp="gone"]{background:#0A0A0A; border-color:#3A3A3A}
+.row[data-exp="soon"]{background:#C0261C}
+.row[data-exp][data-state="todo"]{border-left-color:rgba(255,255,255,.35)}
+.row[data-exp] .meta,.row[data-exp] .lbl,.row[data-exp] .unit{color:rgba(255,255,255,.85)}
+.row[data-exp] .meta strong,.row[data-exp] .badge,.row[data-exp] .linkish{color:#fff}
+.ctl{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+.step,.match{min-width:48px; min-height:48px; border-radius:10px; border:2px solid var(--line); background:var(--surface); font-size:22px; font-weight:700; cursor:pointer; line-height:1; color:var(--ink)}
+.match{border-color:var(--field); color:var(--field); font-size:16px; padding:0 14px; margin-left:auto}
+.row[data-state="ok"] .match{background:var(--field); color:var(--field-ink)}
+input.qty{width:76px; min-height:48px; text-align:center; font-size:20px; font-weight:700; border:2px solid var(--line); border-radius:10px; background:var(--surface); color:var(--ink)}
+.row[data-exp] .step,.row[data-exp] input.qty{background:#fff; color:#111; border-color:#fff}
+.row[data-exp] .match{background:#fff; color:#2C5A43; border-color:#fff}
+.row[data-exp][data-state="ok"] .match{background:#2C5A43; color:#fff; border-color:#fff}
+.unit{font-size:14px; color:var(--muted)}
+.linkish{background:none; border:0; padding:6px 0; color:var(--field); font-weight:700; cursor:pointer; font-size:15px; text-align:left}
+.linkish.danger{color:var(--danger)}
+input.notein{width:100%; min-height:40px; padding:6px 10px; border-radius:8px; border:2px solid var(--line); background:var(--surface); color:var(--ink)}
+.row[data-locked] .ctl{pointer-events:none; opacity:.75}
+.addbox{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:18px; display:grid; gap:8px}
+.addbox .g{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.foot{position:sticky; bottom:0; z-index:4; margin:20px -14px -30px; padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px)); background:var(--surface); border-top:1px solid var(--line); display:flex; align-items:center; gap:12px}
+.foot .save{font-size:14px; color:var(--muted); margin-right:auto}
+.foot .save.bad{color:var(--danger); font-weight:700}
+.empty{background:var(--surface); border:2px dashed var(--line); border-radius:12px; padding:18px; color:var(--muted)}
+.toast{position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--ground); padding:12px 18px; border-radius:10px; z-index:20; max-width:calc(100% - 32px); font-weight:700; display:none}
+.toast.on{display:block}
+dialog{border:0; border-radius:14px; padding:22px; max-width:420px; width:calc(100% - 32px); background:var(--surface); color:var(--ink)}
+dialog::backdrop{background:rgba(10,20,15,.55)}
+dialog h3{margin:0 0 8px; font-size:20px}
+.dlg-actions{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px}
+.hero{text-align:center; padding:40px 10px}
+.hero .mark{width:84px; height:84px; border-radius:22px; margin:0 auto 18px; display:block}
+.ver{text-align:center; font-size:12px; color:var(--muted); margin-top:30px}
+</style>
+</head>
+<body>
+<header class="bar"><b>Stock count</b><button class="who" id="who" hidden></button></header>
+<main id="app"><p class="muted">Loading…</p></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog id="dlg"><h3 id="dlgT"></h3><p id="dlgB"></p><div class="dlg-actions"><button class="btn" id="dlgOk"></button><button class="btn quiet" id="dlgNo"></button></div></dialog>
+
+<script>
+(() => {
+'use strict';
+const SCOPES = ['User.Read', 'Files.ReadWrite.All', 'Sites.Read.All'];
+const GRAPH = 'https://graph.microsoft.com/v1.0';
+const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/* ---------- small helpers ---------- */
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function h(tag, props, ...kids){
+  const n = document.createElement(tag);
+  if (props) for (const [k, v] of Object.entries(props)){
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
+    else if (k.includes('-') || k === 'list' || k === 'inputmode') n.setAttribute(k, v === true ? '' : v);
+    else if (k in n) n[k] = v;
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat(Infinity)){ if (k == null || k === false) continue; n.append(k instanceof Node ? k : document.createTextNode(String(k))); }
+  return n;
+}
+const round = n => Math.round(n * 1000) / 1000;
+const fmt = n => (n == null || isNaN(n)) ? '' : String(round(n));
+const sign = d => d > 0 ? '+' + fmt(d) : d < 0 ? '−' + fmt(-d) : '0';
+function num(v){
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  const s = String(v ?? '').replace(/,/g, '').trim();
+  if (!s) return null;
+  const n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+let toastT;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3500); }
+function ask(title, body, ok, no){
+  const d = $('#dlg');
+  $('#dlgT').textContent = title; $('#dlgB').textContent = body;
+  $('#dlgOk').textContent = ok; $('#dlgNo').textContent = no || 'Cancel';
+  $('#dlgNo').hidden = no === null;
+  return new Promise(res => {
+    const done = v => { d.close(); res(v); };
+    $('#dlgOk').onclick = () => done(true);
+    $('#dlgNo').onclick = () => done(false);
+    d.oncancel = e => { e.preventDefault(); done(false); };
+    try { d.showModal(); } catch { res(window.confirm(title + '\n\n' + body)); }
+  });
+}
+function expiryOf(str){
+  const m = String(str || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!m) return null;
+  const y = +m[3] < 100 ? 2000 + +m[3] : +m[3];
+  const t = new Date(y, +m[2] - 1, +m[1], 23, 59).getTime();
+  return {gone: t < Date.now(), soon: t < Date.now() + 60 * 864e5};
+}
+const unitOf = it => (it.u && !/^n\/?a$/i.test(it.u)) ? it.u : '';
+const stepOf = it => (/^ml$/i.test(it.u || '') && it.wq > 1) ? Math.max(1, round(it.wq / 10)) : 1;
+const stateOf = it => it.q == null ? 'todo' : round(it.q) === round(it.e) ? 'ok' : 'diff';
+function dateStr(v){
+  if (v == null || v === '') return '';
+  if (typeof v === 'number' && v > 20000 && v < 80000) v = new Date(Date.UTC(1899, 11, 30) + v * 864e5);
+  if (v instanceof Date) return `${String(v.getUTCDate()).padStart(2, '0')}/${String(v.getUTCMonth() + 1).padStart(2, '0')}/${v.getUTCFullYear()}`;
+  return String(v).trim();
+}
+function toDate(s){
+  const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!m) return null;
+  const y = +m[3] < 100 ? 2000 + +m[3] : +m[3];
+  return new Date(Date.UTC(y, +m[2] - 1, +m[1]));
+}
+
+/* ---------- workbook in / out ---------- */
+function cellVal(c){
+  const v = c.value;
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'object'){
+    if (v.richText) return v.richText.map(r => r.text).join('');
+    if ('result' in v) return v.result;
+    if (v.text != null) return v.text;
+    if (v.formula) return null;
+  }
+  return v;
+}
+function readBook(wb){
+  const ds = wb.getWorksheet('_data'), is = wb.getWorksheet('_items'), cs = wb.getWorksheet('Count'), xs = wb.getWorksheet('Add missing');
+  if (!ds || cellVal(ds.getCell('A1')) !== 'stockcount-v1' || !is || !cs) throw new Error('notours');
+  const meta = {id:String(cellVal(ds.getCell('A2')) || ''), vet:String(cellVal(ds.getCell('A3')) || ''), car:String(cellVal(ds.getCell('A4')) || ''),
+    status:String(cellVal(ds.getCell('A5')) || 'open'), sentAt:cellVal(ds.getCell('A6')), sentBy:cellVal(ds.getCell('A7'))};
+  const items = [];
+  is.eachRow((row, n) => {
+    if (n === 1) return;
+    const v = k => cellVal(row.getCell(k));
+    const r = +v(2); if (!r) return;
+    const t = cellVal(cs.getCell(r, 5));
+    items.push({ref:+v(1), row:r, n:String(v(3) ?? ''), b:String(v(4) ?? ''), d:dateStr(v(5)), e:num(v(6)) ?? 0, u:String(v(7) ?? ''), wq:num(v(10)),
+      q:num(cellVal(cs.getCell(r, 3))), t: t == null ? '' : String(t)});
+  });
+  const extras = [];
+  if (xs) for (let r = 4; r <= 18; r++){
+    const n = cellVal(xs.getCell(r, 1)), q = num(cellVal(xs.getCell(r, 4)));
+    if (n != null && String(n).trim() && q != null) extras.push({n:String(n).trim(), b:String(cellVal(xs.getCell(r, 2)) ?? ''), d:dateStr(cellVal(xs.getCell(r, 3))), q, t:String(cellVal(xs.getCell(r, 5)) ?? '')});
+  }
+  return {meta, items, extras};
+}
+function writeBook(wb, M){
+  const cs = wb.getWorksheet('Count'), xs = wb.getWorksheet('Add missing'), ds = wb.getWorksheet('_data');
+  for (const it of M.items){
+    cs.getCell(it.row, 3).value = it.q == null ? null : it.q;
+    cs.getCell(it.row, 5).value = it.t ? it.t : null;
+  }
+  if (xs) for (let k = 0; k < 15; k++){
+    const r = 4 + k, x = M.extras[k];
+    xs.getCell(r, 1).value = x ? x.n : null;
+    xs.getCell(r, 2).value = x && x.b ? x.b : null;
+    xs.getCell(r, 3).value = x && x.d ? (toDate(x.d) || x.d) : null;
+    xs.getCell(r, 4).value = x ? x.q : null;
+    xs.getCell(r, 5).value = x && x.t ? x.t : null;
+  }
+  ds.getCell('A5').value = M.meta.status || 'open';
+  ds.getCell('A6').value = M.meta.sentAt || null;
+  ds.getCell('A7').value = M.meta.sentBy || null;
+}
+
+/* ---------- sign in ---------- */
+const configured = !/PASTE|yourpractice/.test(CONFIG.tenantId + CONFIG.clientId + CONFIG.siteHost);
+let pca = null, account = null;
+async function initAuth(){
+  pca = new msal.PublicClientApplication({
+    auth:{clientId:CONFIG.clientId, authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`, redirectUri:location.origin + location.pathname},
+    cache:{cacheLocation:'localStorage'}
+  });
+  await pca.initialize();
+  const res = await pca.handleRedirectPromise();
+  account = (res && res.account) || pca.getAllAccounts()[0] || null;
+  if (account) pca.setActiveAccount(account);
+}
+async function token(){
+  try { return (await pca.acquireTokenSilent({scopes:SCOPES, account})).accessToken; }
+  catch (e){
+    if (e instanceof msal.InteractionRequiredAuthError || (e && /interaction_required|login_required|consent_required/.test(e.errorCode || ''))){
+      await pca.acquireTokenRedirect({scopes:SCOPES, account});
+      return new Promise(() => {});
+    }
+    throw e;
+  }
+}
+async function g(path, opt){
+  opt = opt || {};
+  const tok = await token();
+  const res = await fetch(path.startsWith('http') ? path : GRAPH + path, Object.assign({}, opt, {headers:Object.assign({}, opt.headers || {}, {Authorization:'Bearer ' + tok})}));
+  if (!res.ok){ const err = new Error('graph ' + res.status); err.status = res.status; try { err.body = await res.json(); } catch {} throw err; }
+  return res;
+}
+
+/* ---------- SharePoint ---------- */
+let DRIVE = null;
+async function drive(){
+  if (DRIVE) return DRIVE;
+  const cached = localStorage.getItem('sc:drive:' + CONFIG.siteHost + CONFIG.sitePath);
+  if (cached){ DRIVE = cached; return DRIVE; }
+  const site = await (await g(`/sites/${CONFIG.siteHost}:${CONFIG.sitePath}?$select=id`)).json();
+  const d = await (await g(`/sites/${site.id}/drive?$select=id`)).json();
+  DRIVE = d.id; localStorage.setItem('sc:drive:' + CONFIG.siteHost + CONFIG.sitePath, DRIVE);
+  return DRIVE;
+}
+async function listCounts(){
+  const D = await drive();
+  const root = await (await g(`/drives/${D}/root/children?$top=200&$select=id,name,folder,file,lastModifiedDateTime`)).json();
+  const files = [];
+  const take = (arr, folder) => arr.filter(x => x.file && /\.xlsx$/i.test(x.name)).forEach(x => files.push(Object.assign({folder}, x)));
+  take(root.value, '');
+  const folders = root.value.filter(x => x.folder);
+  const kids = await Promise.all(folders.map(f => g(`/drives/${D}/items/${f.id}/children?$top=200&$select=id,name,file,lastModifiedDateTime`).then(r => r.json()).catch(() => ({value:[]}))));
+  kids.forEach((k, i) => take(k.value, folders[i].name));
+  files.sort((a, b) => String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)));
+  return files;
+}
+async function download(itemId){
+  const D = await drive();
+  const meta = await (await g(`/drives/${D}/items/${itemId}`)).json();
+  const res = await fetch(meta['@microsoft.graph.downloadUrl']);
+  if (!res.ok) throw Object.assign(new Error('download'), {status:res.status});
+  return {buf:await res.arrayBuffer(), eTag:meta.eTag, name:meta.name};
+}
+async function upload(itemId, buf, eTag){
+  const D = await drive();
+  const res = await g(`/drives/${D}/items/${itemId}/content`, {method:'PUT', body:new Blob([buf], {type:XLSX_TYPE}), headers:{'Content-Type':XLSX_TYPE, 'If-Match':eTag}});
+  return (await res.json()).eTag;
+}
+
+/* ---------- state ---------- */
+const S = { files:null, loadErr:'', open:null };
+// open = {itemId, name, eTag, wb, M, dirty, saving, status, timer, filter, q}
+const draftKey = id => 'sc:draft:' + id;
+function saveDraft(o){ try { localStorage.setItem(draftKey(o.itemId), JSON.stringify({id:o.M.meta.id, items:o.M.items.map(i => [i.ref, i.q, i.t]), extras:o.M.extras, status:o.M.meta.status, sentAt:o.M.meta.sentAt, sentBy:o.M.meta.sentBy})); } catch {} }
+function readDraft(id){ try { return JSON.parse(localStorage.getItem(draftKey(id)) || 'null'); } catch { return null; } }
+function clearDraft(id){ try { localStorage.removeItem(draftKey(id)); } catch {} }
+
+/* ---------- screens ---------- */
+const app = () => $('#app');
+function setScreen(...nodes){ app().replaceChildren(...nodes.flat()); window.scrollTo(0, 0); }
+function firstName(){ return account && account.name ? account.name.split(/\s+/)[0] : ''; }
+
+function screenSetup(){
+  setScreen(h('div', {class:'hero'}, h('img', {class:'mark', src:'icon.png', alt:''}), h('h1', {text:'Almost ready'}),
+    h('p', {class:'muted', text:'This app hasn’t been connected to your practice yet. Fill in the settings at the top of index.html, as described in the setup guide.'})));
+}
+function screenSignIn(err){
+  setScreen(h('div', {class:'hero'},
+    h('img', {class:'mark', src:'icon.png', alt:''}),
+    h('h1', {text:'Car stock count'}),
+    h('p', {class:'muted', text:'Sign in with your work Microsoft account, the same one you use for Teams.'}),
+    err ? h('p', {class:'note bad', text:err}) : null,
+    h('button', {class:'btn wide', type:'button', text:'Sign in', onclick: () => pca.loginRedirect({scopes:SCOPES, prompt:'select_account'})})),
+    h('p', {class:'ver', text:'Version ' + APP_VERSION}));
+}
+async function screenHome(){
+  S.open = null;
+  setScreen(h('h1', {text: firstName() ? `Hi ${firstName()}` : 'Your stock counts'}), h('p', {class:'muted', text:'Loading your counts…'}));
+  let files;
+  try { files = await listCounts(); }
+  catch (e){ return screenError(e); }
+  const head = [h('h1', {text: firstName() ? `Hi ${firstName()}` : 'Your stock counts'})];
+  if (!files.length){
+    setScreen(head, h('div', {class:'empty', text:`No stock count waiting for you. ${CONFIG.officeContact.charAt(0).toUpperCase() + CONFIG.officeContact.slice(1)} will add one when it’s time.`}),
+      h('div', {style:'margin-top:14px'}, h('button', {class:'btn quiet', type:'button', text:'Check again', onclick:screenHome})), h('p', {class:'ver', text:'Version ' + APP_VERSION}));
+    return;
+  }
+  const list = h('ul', {class:'list'});
+  setScreen(head, h('p', {class:'muted', text:'Tap a count to open it.'}), list,
+    h('div', {style:'margin-top:14px'}, h('button', {class:'btn quiet', type:'button', text:'Refresh', onclick:screenHome})), h('p', {class:'ver', text:'Version ' + APP_VERSION}));
+  for (const f of files.slice(0, 12)){
+    const label = f.name.replace(/\.xlsx$/i, '').replace(/[-_]+/g, ' ');
+    const sub = h('span', {class:'s', text:`Updated ${new Date(f.lastModifiedDateTime).toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'})}`});
+    const title = h('span', {class:'t', text:label});
+    const go = h('span', {class:'go', text:'Open'});
+    list.append(h('li', null, h('button', {class:'card', type:'button', onclick: () => openCount(f.id)}, title, go, sub)));
+    download(f.id).then(async ({buf}) => {
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+      const M = readBook(wb);
+      title.textContent = M.meta.car || label;
+      const checked = M.items.filter(i => i.q != null).length;
+      if (M.meta.status === 'submitted'){ go.textContent = 'View'; sub.replaceChildren(h('span', {class:'sent', text:'Sent to the office'}), ` ${M.meta.sentAt ? new Date(M.meta.sentAt).toLocaleDateString('en-GB', {day:'numeric', month:'short'}) : ''}`); }
+      else sub.textContent = `${M.items.length} lines, ${checked} checked`;
+    }).catch(() => {});
+  }
+}
+function screenError(e){
+  let msg = 'Something went wrong. Check your signal and try again.';
+  if (e && e.status === 403) msg = `You don’t have access to the stock takes site. Ask ${CONFIG.officeContact} to give you access to your folder.`;
+  else if (e && e.status === 404) msg = 'The stock takes site couldn’t be found. The site address in the app settings may be wrong.';
+  else if (e && e.status === 401) msg = 'Your sign-in has expired. Sign out and sign in again.';
+  else if (e && e.message === 'notours') msg = 'That file isn’t a stock count from the office.';
+  setScreen(h('p', {class:'note bad', text:msg}), h('button', {class:'btn', type:'button', text:'Try again', onclick:screenHome}));
+}
+
+/* ---------- open a count ---------- */
+async function openCount(itemId){
+  setScreen(h('p', {class:'muted', text:'Opening your count…'}));
+  let got;
+  try { got = await download(itemId); } catch (e){ return screenError(e); }
+  const wb = new ExcelJS.Workbook();
+  let M;
+  try { await wb.xlsx.load(got.buf); M = readBook(wb); } catch (e){ return screenError({message:'notours'}); }
+  const o = {itemId, name:got.name, eTag:got.eTag, wb, M, dirty:false, saving:false, status:'saved', timer:null, filter:'all', q:''};
+  const dr = readDraft(itemId);
+  if (dr && dr.id === M.meta.id && M.meta.status !== 'submitted'){
+    const byRef = new Map(dr.items.map(([r, q, t]) => [r, {q, t}]));
+    M.items.forEach(it => { const x = byRef.get(it.ref); if (x){ it.q = x.q; it.t = x.t || ''; } });
+    M.extras = dr.extras || M.extras;
+    if (dr.status === 'submitted'){ M.meta.status = dr.status; M.meta.sentAt = dr.sentAt; M.meta.sentBy = dr.sentBy; }
+    o.dirty = true;
+  } else if (dr) clearDraft(itemId);
+  S.open = o;
+  renderCount();
+  if (o.dirty){ setSave('pending'); flush(); }
+}
+function markDirty(){
+  const o = S.open; if (!o) return;
+  o.dirty = true; saveDraft(o); setSave('pending');
+  clearTimeout(o.timer); o.timer = setTimeout(flush, 1500);
+}
+async function flush(){
+  const o = S.open;
+  if (!o || o.saving || !o.dirty) return;
+  clearTimeout(o.timer);
+  o.saving = true; o.dirty = false; setSave('saving');
+  try {
+    writeBook(o.wb, o.M);
+    const buf = await o.wb.xlsx.writeBuffer();
+    o.eTag = await upload(o.itemId, buf, o.eTag);
+    o.saving = false;
+    if (o.dirty) return flush();
+    clearDraft(o.itemId); setSave('saved');
+  } catch (e){
+    o.saving = false; o.dirty = true;
+    if (e && e.status === 412) return conflict(o);
+    if (e && e.status === 423){ setSave('locked'); }
+    else setSave('failed');
+    clearTimeout(o.timer); o.timer = setTimeout(flush, 15000);
+  }
+}
+async function conflict(o){
+  try {
+    const got = await download(o.itemId);
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(got.buf);
+    const fresh = readBook(wb);
+    if (fresh.meta.id !== o.M.meta.id){
+      clearDraft(o.itemId);
+      await ask('This count has been replaced', `${CONFIG.officeContact.charAt(0).toUpperCase() + CONFIG.officeContact.slice(1)} has put a new count in this file. It will open now.`, 'OK', null);
+      return openCount(o.itemId);
+    }
+    o.wb = wb; o.eTag = got.eTag; o.dirty = true;
+    return flush();
+  } catch { setSave('failed'); }
+}
+function setSave(st){
+  const o = S.open; if (o) o.status = st;
+  const n = $('#save'); if (!n) return;
+  n.classList.toggle('bad', st === 'failed' || st === 'locked');
+  n.textContent = st === 'saved' ? 'All changes saved' : st === 'saving' || st === 'pending' ? 'Saving…'
+    : st === 'locked' ? 'The file is open in Excel somewhere. Close it there and this will save.'
+    : 'Not saved yet: kept on this phone, will save when you have signal.';
+}
+window.addEventListener('online', () => { if (S.open && S.open.dirty) flush(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && S.open && S.open.dirty) flush(); });
+
+function renderCount(){
+  const o = S.open, M = o.M;
+  const editable = M.meta.status !== 'submitted';
+  const prog = h('div', {class:'progress', id:'prog'}, h('div', {class:'track'}, h('div', {class:'fill'})), h('div', {class:'lbl'}, h('span'), h('span', {class:'chg'})));
+  const list = h('ul', {class:'rows', id:'rows'});
+  const search = h('input', {class:'t', type:'search', placeholder:'Find a product or batch', value:o.q, 'aria-label':'Find a product or batch', oninput: e => { o.q = e.target.value; fillRows(list, editable); }});
+  const seg = h('div', {class:'seg', role:'group', 'aria-label':'Show'},
+    [['all', 'All'], ['todo', 'To check'], ['diff', 'Changes']].map(([k, label]) => h('button', {type:'button', 'aria-pressed':String(o.filter === k), text:label, onclick: e => {
+      o.filter = k; seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === e.currentTarget))); fillRows(list, editable);
+    }})));
+  const parts = [
+    h('button', {class:'back', type:'button', text:'‹ Your counts', onclick: async () => { if (o.dirty) await flush(); screenHome(); }}),
+    h('h1', {text:M.meta.car || 'Stock count'}),
+    editable
+      ? h('p', {class:'muted', text:'Make sure your billing is up to date first. Tap Matches if the car agrees with VetIT, or type what you actually have. Anything left can be sent as matching.'})
+      : h('p', {class:'note', text:`Sent to the office${M.meta.sentAt ? ' on ' + new Date(M.meta.sentAt).toLocaleString('en-GB', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : ''}. Ask ${CONFIG.officeContact} if something needs changing.`}),
+    prog, h('div', {class:'tools'}, search, seg), list
+  ];
+  if (editable){
+    parts.push(addBox(list));
+    parts.push(h('div', {class:'foot'}, h('span', {class:'save', id:'save'}), h('button', {class:'btn', type:'button', text:'Send to office', onclick:sendCount})));
+  } else if (M.extras.length){
+    parts.push(h('h2', {text:'Added (not on the list)'}), h('ul', {class:'list'}, M.extras.map(x => h('li', {class:'card', style:'display:block; cursor:default'}, h('b', {text:x.n}), h('div', {class:'small muted', text:[x.b && 'Batch ' + x.b, x.d && 'Exp ' + x.d, 'Qty ' + fmt(x.q)].filter(Boolean).join(', ')})))));
+  }
+  setScreen(parts);
+  wireRows(list, editable);
+  fillRows(list, editable);
+  paintProgress();
+  if (editable) setSave(o.status);
+}
+function fillRows(list, editable){
+  const o = S.open, q = o.q.trim().toLowerCase();
+  const out = [];
+  o.M.items.forEach((it, i) => {
+    if (q && ![it.n, it.b].some(v => (v || '').toLowerCase().includes(q))) return;
+    const st = stateOf(it);
+    if (o.filter === 'todo' && st !== 'todo') return;
+    if (o.filter === 'diff' && st !== 'diff') return;
+    out.push(rowEl(it, i, editable));
+  });
+  list.replaceChildren(...out);
+  if (!out.length) list.append(h('li', {class:'empty', text: o.filter === 'todo' ? 'Everything has been checked.' : o.filter === 'diff' ? 'No changes yet.' : 'Nothing matches that search.'}));
+}
+function rowEl(it, i, editable){
+  const x = expiryOf(it.d);
+  const li = h('li', {class:'row', 'data-i':String(i), 'data-exp': x ? (x.gone ? 'gone' : x.soon ? 'soon' : null) : null});
+  if (!editable) li.setAttribute('data-locked', '');
+  const u = unitOf(it);
+  li.append(
+    h('div', {class:'name', text:it.n}),
+    (it.b || it.d) ? h('div', {class:'lot'},
+      it.b ? h('span', null, h('span', {class:'lbl', text:'Batch '}), h('b', {text:it.b})) : null,
+      it.d ? h('span', null, h('span', {class:'lbl', text: x && x.gone ? 'EXPIRED ' : x && x.soon ? 'Expires soon ' : 'Expiry '}), h('b', {text:it.d})) : null) : null,
+    h('div', {class:'meta'}, h('span', null, 'VetIT ', h('strong', {text:fmt(it.e)}), u ? ' ' + u : ''), h('span', {class:'badge'})),
+    h('div', {class:'ctl'},
+      h('button', {class:'step', type:'button', 'data-act':'dec', 'aria-label':'One less', text:'−'}),
+      h('input', {class:'qty', inputmode:'decimal', 'aria-label':'In car: ' + it.n, placeholder:fmt(it.e)}),
+      h('button', {class:'step', type:'button', 'data-act':'inc', 'aria-label':'One more', text:'+'}),
+      u ? h('span', {class:'unit', text:u}) : null,
+      h('button', {class:'match', type:'button', 'data-act':'ok', text:'Matches'})),
+    (editable || it.t) ? h('button', {class:'linkish', type:'button', 'data-act':'note', text: it.t ? 'Note: ' + it.t : 'Add note'}) : null
+  );
+  paintRow(li, it);
+  return li;
+}
+function paintRow(li, it){
+  li.setAttribute('data-state', stateOf(it));
+  const u = unitOf(it) ? ' ' + unitOf(it) : '';
+  li.querySelector('.badge').textContent = stateOf(it) === 'diff' ? `Have ${fmt(it.q)}${u} (${sign(it.q - it.e)})` : '';
+  const inp = li.querySelector('input.qty');
+  if (inp && document.activeElement !== inp) inp.value = it.q == null ? '' : fmt(it.q);
+}
+function paintProgress(){
+  const p = $('#prog'); if (!p || !S.open) return;
+  const items = S.open.M.items;
+  const checked = items.filter(i => i.q != null).length, changes = items.filter(i => stateOf(i) === 'diff').length + S.open.M.extras.length;
+  p.querySelector('.fill').style.width = (items.length ? checked / items.length * 100 : 0) + '%';
+  p.querySelector('.lbl span').textContent = `${checked} of ${items.length} checked`;
+  p.querySelector('.chg').textContent = changes ? (changes === 1 ? '1 change' : changes + ' changes') : '';
+}
+function wireRows(list, editable){
+  if (!editable) return;
+  list.addEventListener('click', e => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const li = btn.closest('.row'); const it = S.open.M.items[+li.getAttribute('data-i')];
+    const act = btn.getAttribute('data-act');
+    if (act === 'note'){
+      if (li.querySelector('input.notein')) return;
+      const inp = h('input', {class:'notein', value:it.t || '', placeholder:'e.g. expired, binned', 'aria-label':'Note for ' + it.n,
+        oninput: ev => { it.t = ev.target.value; markDirty(); },
+        onblur: () => { btn.textContent = it.t ? 'Note: ' + it.t : 'Add note'; btn.hidden = false; inp.remove(); }});
+      btn.hidden = true; btn.after(inp); inp.focus(); return;
+    }
+    if (act === 'ok') it.q = it.e;
+    if (act === 'dec') it.q = Math.max(0, round((it.q ?? Math.max(0, it.e)) - stepOf(it)));
+    if (act === 'inc') it.q = round((it.q ?? Math.max(0, it.e)) + stepOf(it));
+    paintRow(li, it); markDirty(); paintProgress();
+  });
+  list.addEventListener('input', e => {
+    if (!e.target.classList.contains('qty')) return;
+    const li = e.target.closest('.row'); const it = S.open.M.items[+li.getAttribute('data-i')];
+    const v = e.target.value.trim();
+    const n = v === '' ? null : num(v);
+    if (v !== '' && n == null) return;
+    it.q = n; paintRow(li, it); markDirty(); paintProgress();
+  });
+}
+function addBox(list){
+  const o = S.open;
+  const names = [...new Set(o.M.items.map(i => i.n))].sort();
+  const nm = h('input', {class:'t', placeholder:'Product', list:'prods', autocomplete:'off'});
+  const bt = h('input', {class:'t', placeholder:'Batch', autocomplete:'off'});
+  const ex = h('input', {class:'t', placeholder:'Expiry dd/mm/yyyy', inputmode:'numeric', autocomplete:'off'});
+  const qt = h('input', {class:'t', placeholder:'How many', inputmode:'decimal'});
+  const added = h('ul', {class:'list'});
+  const paintAdded = () => {
+    added.replaceChildren(...o.M.extras.map((x, k) => h('li', {class:'card', style:'display:block; cursor:default'},
+      h('b', {text:x.n}), h('div', {class:'small muted', text:[x.b && 'Batch ' + x.b, x.d && 'Exp ' + x.d, 'Qty ' + fmt(x.q)].filter(Boolean).join(', ')}),
+      h('button', {class:'linkish danger', type:'button', text:'Remove', onclick: () => { o.M.extras.splice(k, 1); paintAdded(); markDirty(); paintProgress(); }}))));
+  };
+  paintAdded();
+  return h('div', {class:'addbox'},
+    h('b', {text:'Found a batch or product that isn’t on the list?'}),
+    h('span', {class:'small muted', text:'Pick the product if it’s on your list, then add the batch and expiry from the box or bottle.'}),
+    h('datalist', {id:'prods'}, names.map(n => h('option', {value:n}))),
+    nm, h('div', {class:'g'}, bt, ex), qt,
+    h('button', {class:'btn quiet', type:'button', text:'Add', onclick: () => {
+      const n = nm.value.trim(), q = num(qt.value);
+      if (!n || q == null || q <= 0){ toast('Add the product and how many you have.'); return; }
+      if (ex.value.trim() && !toDate(ex.value.trim())){ toast('Type the expiry as dd/mm/yyyy.'); return; }
+      if (o.M.extras.length >= 15){ toast('That’s the most you can add. Put the rest in a note.'); return; }
+      const match = o.M.items.find(i => i.n.toLowerCase() === n.toLowerCase());
+      o.M.extras.push({n: match ? match.n : n, b:bt.value.trim(), d:ex.value.trim(), q, t:''});
+      nm.value = bt.value = ex.value = qt.value = '';
+      paintAdded(); markDirty(); paintProgress(); toast('Added');
+    }}),
+    added);
+}
+async function sendCount(){
+  const o = S.open, M = o.M;
+  const untouched = M.items.filter(i => i.q == null);
+  const changes = M.items.filter(i => stateOf(i) === 'diff').length + M.extras.length;
+  const cl = changes === 1 ? '1 change' : `${changes} changes`;
+  const ok = untouched.length
+    ? await ask(untouched.length === 1 ? '1 item not checked' : `${untouched.length} items not checked`, `Send ${untouched.length === 1 ? 'it' : 'them'} as matching VetIT? Only if you’re happy the car agrees. You have ${cl}.`, 'Yes, send', 'Keep counting')
+    : await ask('Send to the office?', `You have ${cl}. You won’t be able to change it after sending.`, 'Send', 'Not yet');
+  if (!ok) return;
+  M.meta.status = 'submitted'; M.meta.sentAt = new Date().toISOString(); M.meta.sentBy = account ? account.name || account.username : '';
+  o.dirty = true; saveDraft(o);
+  setSave('saving');
+  await flush();
+  for (let k = 0; k < 40 && (o.saving || o.dirty) && o.status !== 'failed' && o.status !== 'locked'; k++) await sleep(150);
+  if (o.dirty){
+    await ask('Saved on this phone', 'Your count is marked as sent, but it hasn’t reached the office yet. Keep the app open when you have signal and it will finish sending.', 'OK', null);
+  } else {
+    await ask('Sent', `Thanks. Let ${CONFIG.officeContact} know on Teams that your stock take is done, and wait for them to confirm VetIT is updated before billing from the car.`, 'OK', null);
+  }
+  renderCount();
+}
+
+/* ---------- start ---------- */
+async function start(){
+  if (!configured){ screenSetup(); return; }
+  if (!window.msal || !window.ExcelJS){ setScreen(h('p', {class:'note bad', text:'The app didn’t load properly. Check your signal and reload.'})); return; }
+  try { await initAuth(); }
+  catch (e){ return screenSignIn('Sign-in didn’t work. Try again, and if it keeps happening tell the office.'); }
+  if (!account) return screenSignIn();
+  const who = $('#who');
+  who.hidden = false; who.textContent = 'Sign out';
+  who.onclick = async () => { if (await ask('Sign out?', 'You’ll need to sign in again to do your count.', 'Sign out', 'Cancel')) pca.logoutRedirect({account}); };
+  screenHome();
+}
+start();
+})();
+</script>
+</body>
+</html>
