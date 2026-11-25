@@ -21,13 +21,13 @@
    this file needs changing to get started.
    ====================================================================== */
 const CONFIG = {
-  tenantId: '5e432375-73fd-4654-bca3-6614c1442769',
-  clientId: '4b7c3587-e524-459d-be07-dee44c298463',
-  siteHost: 'tyndalevetscouk.sharepoint.com',   // e.g. contosovets.sharepoint.com
+  tenantId: 'PASTE-DIRECTORY-TENANT-ID-HERE',
+  clientId: 'PASTE-APPLICATION-CLIENT-ID-HERE',
+  siteHost: 'yourpractice.sharepoint.com',   // e.g. contosovets.sharepoint.com
   sitePath: '/sites/StockTakes',              // the stock takes site address after the host
-  officeContact: 'Abbi/Amber'                 // shown to vets, e.g. 'Sarah in the office'
+  officeContact: 'the office'                 // shown to vets, e.g. 'Sarah in the office'
 };
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.7';
 </script>
 <style>
 :root{
@@ -136,6 +136,14 @@ dialog h3{margin:0 0 8px; font-size:20px}
 .flag ul{margin:6px 0 0; padding-left:20px; font-size:15px}
 .flag .why{font-size:14px; color:var(--muted); margin-top:4px}
 .hist{display:grid; gap:8px}
+.addbatch{list-style:none; margin:-2px 0 4px}
+.addbatch .linkish{padding:10px 2px; font-size:16px}
+.addform{list-style:none; background:var(--surface); border:2px dashed var(--field); border-radius:12px; padding:12px; display:grid; gap:8px}
+.addform .g{display:grid; grid-template-columns:1fr 1fr; gap:8px}
+.addform .acts{display:flex; gap:10px}
+.row.added{border-left-color:var(--focus)}
+.row.added .tag{font-size:13px; font-weight:700; color:var(--focus)}
+.row[data-exp].added .tag{color:#fff}
 .hist .card{cursor:default; display:block}
 .hist .mini{display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:4px 12px; margin-top:8px; font-size:15px}
 .hist .mini b{font-variant-numeric:tabular-nums}
@@ -550,6 +558,53 @@ function screenError(e){
   setScreen(h('p', {class:'note bad', text:msg}), h('button', {class:'btn', type:'button', text:'Try again', onclick:screenHome}));
 }
 
+/* ---------- added batches ---------- */
+const sameName = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+function slashDate(e){
+  const d = e.target.value.replace(/\D/g, '').slice(0, 8);
+  e.target.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
+}
+function checkExtra(b, d, q){
+  const missing = [!b && 'the batch', !d && 'the expiry date', (q == null || q <= 0) && 'how many'].filter(Boolean);
+  if (missing.length) return {msg:`Add ${missing.length > 1 ? missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1] : missing[0]} before adding.`, field: !b ? 'b' : !d ? 'd' : 'q'};
+  if (!toDate(d) || d.replace(/\D/g, '').length < 6) return {msg:'Type the full expiry date: day, month, year, e.g. 19112026.', field:'d'};
+  if (S.open.M.extras.length >= 15) return {msg:'That’s the most you can add. Put the rest in a note.', field:null};
+  return null;
+}
+function extraRowEl(x, xi, editable){
+  const ex = expiryOf(x.d);
+  const base = S.open.M.items.find(i => sameName(i.n, x.n));
+  const u = base ? unitOf(base) : '';
+  const li = h('li', {class:'row added', 'data-x':String(xi), 'data-state':'diff', 'data-exp': ex ? (ex.gone ? 'gone' : ex.soon ? 'soon' : null) : null});
+  li.append(
+    h('div', {class:'name', text:x.n}),
+    h('div', {class:'lot'},
+      h('span', null, h('span', {class:'lbl', text:'Batch '}), h('b', {text:x.b || '–'})),
+      h('span', null, h('span', {class:'lbl', text: ex && ex.gone ? 'EXPIRED ' : ex && ex.soon ? 'Expires soon ' : 'Expiry '}), h('b', {text:x.d || '–'}))),
+    h('div', {class:'meta'}, h('span', {class:'tag', text:'Added: not on VetIT list'}), h('span', null, 'In car ', h('strong', {text:fmt(x.q)}), u ? ' ' + u : '')),
+    editable ? h('button', {class:'linkish danger', type:'button', 'data-act':'rmx', text:'Remove'}) : null);
+  return li;
+}
+function addForm(list, name){
+  const bt = h('input', {class:'t', placeholder:'Batch (required)', 'aria-label':`Batch number for ${name}, required`, autocomplete:'off'});
+  const ex = h('input', {class:'t', placeholder:'Expiry (required)', inputmode:'numeric', maxLength:10, autocomplete:'off', 'aria-label':'Expiry date, day month year, required', oninput:slashDate});
+  const qt = h('input', {class:'t', placeholder:'How many', inputmode:'decimal', 'aria-label':'How many in the car'});
+  const li = h('li', {class:'addform'},
+    h('b', {text:`Another batch of ${name}`}),
+    h('div', {class:'g'}, bt, ex), qt,
+    h('div', {class:'acts'},
+      h('button', {class:'btn', type:'button', text:'Add', onclick: () => {
+        const b = bt.value.trim(), d = ex.value.trim(), q = num(qt.value);
+        const bad = checkExtra(b, d, q);
+        if (bad){ toast(bad.msg); ({b:bt, d:ex, q:qt})[bad.field]?.focus(); return; }
+        S.open.M.extras.push({n:name, b, d, q, t:''});
+        markDirty(); paintProgress(); fillRows(list, true); toast('Batch added');
+      }}),
+      h('button', {class:'btn quiet', type:'button', text:'Cancel', onclick: () => li.remove()})));
+  setTimeout(() => bt.focus(), 50);
+  return li;
+}
+
 /* ---------- open a count ---------- */
 async function openCount(itemId){
   setScreen(h('p', {class:'muted', text:'Opening your count…'}));
@@ -645,8 +700,8 @@ function renderCount(){
   if (editable){
     parts.push(addBox(list));
     parts.push(h('div', {class:'foot'}, h('span', {class:'save', id:'save'}), h('button', {class:'btn', type:'button', text:'Send to office', onclick:sendCount})));
-  } else if (M.extras.length){
-    parts.push(h('h2', {text:'Added (not on the list)'}), h('ul', {class:'list'}, M.extras.map(x => h('li', {class:'card', style:'display:block; cursor:default'}, h('b', {text:x.n}), h('div', {class:'small muted', text:[x.b && 'Batch ' + x.b, x.d && 'Exp ' + x.d, 'Qty ' + fmt(x.q)].filter(Boolean).join(', ')})))));
+  } else if (M.extras.some(x => !M.items.some(i => sameName(i.n, x.n)))){
+    parts.push(h('h2', {text:'Added (not on the list)'}), h('ul', {class:'list'}, M.extras.filter(x => !M.items.some(i => sameName(i.n, x.n))).map(x => h('li', {class:'card', style:'display:block; cursor:default'}, h('b', {text:x.n}), h('div', {class:'small muted', text:[x.b && 'Batch ' + x.b, x.d && 'Exp ' + x.d, 'Qty ' + fmt(x.q)].filter(Boolean).join(', ')})))));
   }
   setScreen(parts);
   wireRows(list, editable);
@@ -656,13 +711,22 @@ function renderCount(){
 }
 function fillRows(list, editable){
   const o = S.open, q = o.q.trim().toLowerCase();
-  const out = [];
+  const shown = [];
   o.M.items.forEach((it, i) => {
     if (q && ![it.n, it.b].some(v => (v || '').toLowerCase().includes(q))) return;
     const st = stateOf(it);
     if (o.filter === 'todo' && st !== 'todo') return;
-    if (o.filter === 'diff' && st !== 'diff') return;
-    out.push(rowEl(it, i, editable));
+    if (o.filter === 'diff' && st !== 'diff' && !o.M.extras.some(x => sameName(x.n, it.n))) return;
+    shown.push({it, i});
+  });
+  const out = [];
+  shown.forEach(({it, i}, k) => {
+    if (!(o.filter === 'diff' && stateOf(it) !== 'diff')) out.push(rowEl(it, i, editable));
+    const next = shown[k + 1];
+    if (!next || !sameName(next.it.n, it.n)){
+      if (o.filter !== 'todo') o.M.extras.forEach((x, xi) => { if (sameName(x.n, it.n)) out.push(extraRowEl(x, xi, editable)); });
+      if (editable && o.filter === 'all') out.push(h('li', {class:'addbatch'}, h('button', {class:'linkish', type:'button', 'data-act':'addb', 'data-n':it.n, text:'+ Add another batch'})));
+    }
   });
   list.replaceChildren(...out);
   if (!out.length) list.append(h('li', {class:'empty', text: o.filter === 'todo' ? 'Everything has been checked.' : o.filter === 'diff' ? 'No changes yet.' : 'Nothing matches that search.'}));
@@ -708,8 +772,19 @@ function wireRows(list, editable){
   if (!editable) return;
   list.addEventListener('click', e => {
     const btn = e.target.closest('[data-act]'); if (!btn) return;
-    const li = btn.closest('.row'); const it = S.open.M.items[+li.getAttribute('data-i')];
     const act = btn.getAttribute('data-act');
+    if (act === 'addb'){
+      const holder = btn.closest('li');
+      const nxt = holder.nextElementSibling;
+      if (nxt && nxt.classList.contains('addform')){ nxt.querySelector('input').focus(); return; }
+      holder.after(addForm(list, btn.getAttribute('data-n')));
+      return;
+    }
+    if (act === 'rmx'){
+      const xi = +btn.closest('.row').getAttribute('data-x');
+      S.open.M.extras.splice(xi, 1); markDirty(); paintProgress(); fillRows(list, true); return;
+    }
+    const li = btn.closest('.row'); const it = S.open.M.items[+li.getAttribute('data-i')];
     if (act === 'note'){
       if (li.querySelector('input.notein')) return;
       const inp = h('input', {class:'notein', value:it.t || '', placeholder:'e.g. expired, binned', 'aria-label':'Note for ' + it.n,
@@ -735,8 +810,8 @@ function addBox(list){
   const o = S.open;
   const names = [...new Set(o.M.items.map(i => i.n))].sort();
   const nm = h('input', {class:'t', placeholder:'Product', list:'prods', autocomplete:'off'});
-  const bt = h('input', {class:'t', placeholder:'Batch', autocomplete:'off'});
-  const ex = h('input', {class:'t', placeholder:'Expiry e.g. 19112026', inputmode:'numeric', autocomplete:'off', maxLength:10, 'aria-label':'Expiry date, day month year',
+  const bt = h('input', {class:'t', placeholder:'Batch (required)', 'aria-label':'Batch number, required', autocomplete:'off', required:true});
+  const ex = h('input', {class:'t', placeholder:'Expiry (required)', inputmode:'numeric', autocomplete:'off', maxLength:10, required:true, 'aria-label':'Expiry date, day month year, required',
     oninput: e => {
       const d = e.target.value.replace(/\D/g, '').slice(0, 8);
       e.target.value = d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
@@ -744,25 +819,31 @@ function addBox(list){
   const qt = h('input', {class:'t', placeholder:'How many', inputmode:'decimal'});
   const added = h('ul', {class:'list'});
   const paintAdded = () => {
-    added.replaceChildren(...o.M.extras.map((x, k) => h('li', {class:'card', style:'display:block; cursor:default'},
+    added.replaceChildren(...o.M.extras.map((x, k) => ({x, k})).filter(({x}) => !o.M.items.some(i => sameName(i.n, x.n))).map(({x, k}) => h('li', {class:'card', style:'display:block; cursor:default'},
       h('b', {text:x.n}), h('div', {class:'small muted', text:[x.b && 'Batch ' + x.b, x.d && 'Exp ' + x.d, 'Qty ' + fmt(x.q)].filter(Boolean).join(', ')}),
       h('button', {class:'linkish danger', type:'button', text:'Remove', onclick: () => { o.M.extras.splice(k, 1); paintAdded(); markDirty(); paintProgress(); }}))));
   };
   paintAdded();
   return h('div', {class:'addbox'},
-    h('b', {text:'Found a batch or product that isn’t on the list?'}),
-    h('span', {class:'small muted', text:'Pick the product if it’s on your list, then add the batch and expiry from the box or bottle.'}),
+    h('b', {text:'A product that isn’t on your list at all?'}),
+    h('span', {class:'small muted', text:'For another batch of a product that is on your list, use “+ Add another batch” under that product instead. The batch number and expiry date are both needed.'}),
     h('datalist', {id:'prods'}, names.map(n => h('option', {value:n}))),
     nm, h('div', {class:'g'}, bt, ex), qt,
     h('button', {class:'btn quiet', type:'button', text:'Add', onclick: () => {
-      const n = nm.value.trim(), q = num(qt.value);
-      if (!n || q == null || q <= 0){ toast('Add the product and how many you have.'); return; }
-      if (ex.value.trim() && !toDate(ex.value.trim())){ toast('Type the expiry as day, month, year, e.g. 19112026.'); return; }
+      const n = nm.value.trim(), q = num(qt.value), b = bt.value.trim(), d = ex.value.trim();
+      const missing = [!n && 'the product', !b && 'the batch', !d && 'the expiry date', (q == null || q <= 0) && 'how many'].filter(Boolean);
+      if (missing.length){
+        toast(`Add ${missing.length > 1 ? missing.slice(0, -1).join(', ') + ' and ' + missing[missing.length - 1] : missing[0]} before adding.`);
+        (!n ? nm : !b ? bt : !d ? ex : qt).focus();
+        return;
+      }
+      if (!toDate(d) || d.replace(/\D/g, '').length < 6){ toast('Type the full expiry date: day, month, year, e.g. 19112026.'); ex.focus(); return; }
       if (o.M.extras.length >= 15){ toast('That’s the most you can add. Put the rest in a note.'); return; }
       const match = o.M.items.find(i => i.n.toLowerCase() === n.toLowerCase());
-      o.M.extras.push({n: match ? match.n : n, b:bt.value.trim(), d:ex.value.trim(), q, t:''});
+      o.M.extras.push({n: match ? match.n : n, b, d, q, t:''});
       nm.value = bt.value = ex.value = qt.value = '';
-      paintAdded(); markDirty(); paintProgress(); toast('Added');
+      markDirty(); paintProgress(); toast('Added');
+      if (match) fillRows(list, true); else paintAdded();
     }}),
     added);
 }
